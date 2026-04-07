@@ -6,22 +6,26 @@ INCLUDES = include
 SRCDIR = ./src
 OBJDIR = ./obj
 BINDIR = ./bin
+LIBDIR = ./lib
 
 .PHONY: all
-all: $(BINDIR)/bench $(BINDIR)/test
+all: $(LIBDIR)/libavxfish.a $(BINDIR)/bench $(BINDIR)/test
 
 .PHONY: clean
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)
 
-$(OBJDIR) $(BINDIR):
-	mkdir $@
+$(OBJDIR) $(LIBDIR) $(BINDIR):
+	mkdir -p $@
 
 $(OBJDIR)/%.S.o: $(SRCDIR)/%.S | $(OBJDIR)
 	$(CC) -o $@ -c $<
 
 $(OBJDIR)/%.c.o: $(SRCDIR)/%.c $(shell find $(INCLUDES) -name '*.h') | $(OBJDIR)
 	$(CC) -o $@  -I$(INCLUDES) $(CFLAGS) -c $<
+
+$(LIBDIR)/libavxfish.a: $(OBJDIR)/avxfish.S.o | $(LIBDIR)
+	$(AR) rcs $@ $^
 
 $(BINDIR)/bench: $(OBJDIR)/avxfish.S.o $(OBJDIR)/bench.c.o | $(BINDIR)
 	$(CC) -o $@ $(LDFLAGS) $^
