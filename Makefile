@@ -1,5 +1,4 @@
 #CC = clang
-NASM = nasm
 
 CFLAGS = -O3 -fPIC -g -Wall -Wextra -std=gnu99 -pedantic -mavx512f -mavx512vl
 LDFLAGS = -static
@@ -18,14 +17,14 @@ clean:
 $(OBJDIR) $(BINDIR):
 	mkdir $@
 
-$(OBJDIR)/%.asm.o: $(SRCDIR)/%.asm | $(OBJDIR)
-	$(NASM) -o $@ -f elf64 $<
+$(OBJDIR)/%.S.o: $(SRCDIR)/%.S | $(OBJDIR)
+	$(CC) -o $@ -c $<
 
 $(OBJDIR)/%.c.o: $(SRCDIR)/%.c $(shell find $(INCLUDES) -name '*.h') | $(OBJDIR)
 	$(CC) -o $@  -I$(INCLUDES) $(CFLAGS) -c $<
 
-$(BINDIR)/bench: $(OBJDIR)/avxfish.asm.o $(OBJDIR)/bench.c.o | $(BINDIR)
+$(BINDIR)/bench: $(OBJDIR)/avxfish.S.o $(OBJDIR)/bench.c.o | $(BINDIR)
 	$(CC) -o $@ $(LDFLAGS) $^
 
-$(BINDIR)/test: $(OBJDIR)/avxfish.asm.o $(OBJDIR)/test.c.o | $(BINDIR)
+$(BINDIR)/test: $(OBJDIR)/avxfish.S.o $(OBJDIR)/test.c.o | $(BINDIR)
 	$(CC) -o $@ $(LDFLAGS) $^
