@@ -15,10 +15,12 @@ static void print_words(const char *name, const uint64_t *w, size_t n) {
 }
 
 static int run_vector(const char *name, const uint64_t key[16], const uint64_t tweak[2],
-                      const uint64_t pt[16], const uint64_t ct[16]) {
+                      const uint64_t pt[16], const uint64_t ct[16],
+                      const uint64_t feedforward[16]) {
     uint64_t subkeys[AVXFISH_EXPANDED_KEY_WORDS];
     uint64_t out[16];
     uint64_t dec[16];
+    uint64_t ff[16];
 
     threefish1024_key_schedule(key, tweak, subkeys);
     avxfish_encrypt_block(pt, out, subkeys);
@@ -26,6 +28,20 @@ static int run_vector(const char *name, const uint64_t key[16], const uint64_t t
         fprintf(stderr, "%s encrypt failed\n", name);
         print_words("expected", ct, 16);
         print_words("actual  ", out, 16);
+        return 1;
+    }
+
+    /*
+     * KAT_MCT/skein_golden_kat_internals.txt also records the Skein UBI
+     * plaintext-feedforward value after Threefish encryption. avxfish is a
+     * raw Threefish block function, so this test computes the feedforward
+     * externally as ciphertext XOR plaintext.
+     */
+    for (size_t i = 0; i < 16; ++i) ff[i] = out[i] ^ pt[i];
+    if (!same_words(ff, feedforward, 16)) {
+        fprintf(stderr, "%s plaintext feedforward check failed\n", name);
+        print_words("expected", feedforward, 16);
+        print_words("actual  ", ff, 16);
         return 1;
     }
 
@@ -57,6 +73,16 @@ int main(void) {
     const uint64_t zero_tw[2] = {0};
     const uint64_t zero_pt[16] = {0};
     const uint64_t zero_ct[16] = {
+        UINT64_C(0x04B3053D0A3D5CF0), UINT64_C(0x0136E0D1C7DD85F7),
+        UINT64_C(0x067B212F6EA78A5C), UINT64_C(0x0DA9C10B4C54E1C6),
+        UINT64_C(0x0F4EC27394CBACF0), UINT64_C(0x32437F0568EA4FD5),
+        UINT64_C(0xCFF56D1D7654B49C), UINT64_C(0xA2D5FB14369B2E7B),
+        UINT64_C(0x540306B460472E0B), UINT64_C(0x71C18254BCEA820D),
+        UINT64_C(0xC36B4068BEAF32C8), UINT64_C(0xFA4329597A360095),
+        UINT64_C(0xC4A36C28434A5B9A), UINT64_C(0xD54331444B1046CF),
+        UINT64_C(0xDF11834830B2A460), UINT64_C(0x1E39E8DFE1F7EE4F)
+    };
+    const uint64_t zero_ff[16] = {
         UINT64_C(0x04B3053D0A3D5CF0), UINT64_C(0x0136E0D1C7DD85F7),
         UINT64_C(0x067B212F6EA78A5C), UINT64_C(0x0DA9C10B4C54E1C6),
         UINT64_C(0x0F4EC27394CBACF0), UINT64_C(0x32437F0568EA4FD5),
@@ -98,6 +124,16 @@ int main(void) {
         UINT64_C(0xB316570A15F41333), UINT64_C(0x74E98A2869F5D50E),
         UINT64_C(0x57CE6F9247432BCE), UINT64_C(0xDE7CDD77215144DE)
     };
+    const uint64_t tv10_ff[16] = {
+        UINT64_C(0x483AC62C27B09B59), UINT64_C(0x4CB85AA9E48221AA),
+        UINT64_C(0x80BC1644069F7D0B), UINT64_C(0xFCB26748FF92B235),
+        UINT64_C(0xE83D70243B5D294B), UINT64_C(0x316A3CA3587A0E02),
+        UINT64_C(0x5461FD7C8EF6C1B9), UINT64_C(0x7DD5C1A4C98CA574),
+        UINT64_C(0xFDA694875AA31A35), UINT64_C(0x03D1319C26C2624C),
+        UINT64_C(0xA2066D0DF2BF7827), UINT64_C(0x6831CCDAA5C8A370),
+        UINT64_C(0x2B8FCD9189698DAC), UINT64_C(0xE47818BBFD604399),
+        UINT64_C(0xDF47E519CBCEA541), UINT64_C(0x5EFD5FF4A5D4C259)
+    };
 
     if (avxfish_avx512_available()) {
         printf("AVX-512F available: yes\n");
@@ -106,9 +142,9 @@ int main(void) {
         printf("The binary may still run only on AVX-512-capable machines.\n");
     }
 
-    if (run_vector("Threefish-1024 TV9", zero_key, zero_tw, zero_pt, zero_ct)) return 1;
-    if (run_vector("Threefish-1024 TV10", tv10_key, tv10_tw, tv10_pt, tv10_ct)) return 1;
+    if (run_vector("Threefish-1024 TV9 / KAT_MCT zero", zero_key, zero_tw, zero_pt, zero_ct, zero_ff)) return 1;
+    if (run_vector("Threefish-1024 TV10 / KAT_MCT nonzero", tv10_key, tv10_tw, tv10_pt, tv10_ct, tv10_ff)) return 1;
 
-    puts("avxfish AVX-512 intrinsics encrypt/decrypt tests passed");
+    puts("avxfish AVX-512 intrinsics KAT_MCT encrypt/decrypt/feedforward tests passed");
     return 0;
 }

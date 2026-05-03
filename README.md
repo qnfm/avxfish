@@ -11,7 +11,7 @@ This variant replaces the original NASM-only Threefish-1024 AVX-512 path with a 
   - `avxfish_decrypt_block(in, out, subkeys)`
   - `avxfish_decrypt(block, subkeys)`
   - `avxfish_avx512_available()`
-- The test program now checks official Threefish-1024 KATs for both encryption and decryption.
+- The test program now checks the Threefish-1024 vectors present in `KAT_MCT/skein_golden_kat_internals.txt`: raw encryption, decryption, in-place APIs, and the Skein plaintext-feedforward value computed externally as `ciphertext XOR plaintext`.
 - The benchmark now measures both encryption and decryption.
 
 ## Build
@@ -55,3 +55,15 @@ The original NASM version required 64-byte aligned block and subkey pointers. Th
 ## Notes
 
 The expanded subkey format is now normal Threefish word order for all 21 subkeys. This is easier to verify against standard test vectors and simpler to embed in other libraries.
+
+## Build outputs
+
+All generated object files and binaries are placed under `build/`:
+
+```bash
+make
+./build/test
+./build/bench
+```
+
+The convenience targets `make run-test` and `make run-bench` also use these paths.
