@@ -1,46 +1,57 @@
-avxfish
-=======
+# avxfish intrinsics edition
 
-This repository contains an assembly AVX-512 vectorized implementation of the Threefish-1024 block cipher (forward direction only). Threefish-1024 is the widest variant of the Threefish family of block ciphers. This implementation is not intended to be used directly, but to be integrated into other libraries as needed, or to be used as a reference from which to implement more vectorized Threefish variants. The same basic principle can be applied to all variants, but when it comes to SIMD, widest is fastest.
+This variant replaces the original NASM-only Threefish-1024 AVX-512 path with a C++17 AVX-512 intrinsics implementation.
 
-# Performance
+## What changed
 
-This implementation is optimized for the AVX-512 instruction set, and requires the AVX-512F and AVX-512VL instructions. On an Intel(R) Xeon(R) Platinum 8124M (vCPU) processor, it is capable of processing 853 mebibytes of data from main memory per second per core at 3.0GHz, representing a performance of 3.35 cycles per byte which is very respectable for a software implementation. This speed was measured using a load-process-store loop through a 1GB memory buffer, averaged over several runs each with a random key and tweak and a randomized input buffer. In certain conditions, such as CTR mode encryption, it is not necessary to round-trip through memory as the counter block can be kept in ZMM registers and XORed with the plaintext/ciphertext stream. This can result in slightly improved performance if the implementation is suitably modified for this purpose, in the event that theoretical peak throughput needs to be attained.
+- `src/avxfish.cpp` implements both encryption and decryption with AVX-512 intrinsics.
+- `include/avxfish.h` keeps the original `avxfish(block, subkeys)` encryption entry point.
+- New APIs:
+  - `avxfish_encrypt_block(in, out, subkeys)`
+  - `avxfish_decrypt_block(in, out, subkeys)`
+  - `avxfish_decrypt(block, subkeys)`
+  - `avxfish_avx512_available()`
+- The test program now checks official Threefish-1024 KATs for both encryption and decryption.
+- The benchmark now measures both encryption and decryption.
 
-# Usage Notes
+## Build
 
-The implementation in `src/avxfish.asm` is written in NASM and exposes a single function `avxfish` which takes two arguments, a pointer to the 1024-bit block to process, and a (const) pointer to 21 1024-bit subkeys obtained through the key schedule algorithm. Both pointers must be 64-byte aligned, although this restriction can be relaxed by changing the appropriate `vmovdqa64` instructions to `vmovdqu64` with a minimal performance penalty. The assembly implementation makes heavy use of macros for readability.
+```sh
+make
+make run-test
+make run-bench
+```
 
-The key schedule algorithm is implemented in `include/avxfish.h` in plain C. It does not lend itself well to an SIMD implementation, unfortunately, as the key schedule involves rotating 17 key words and 3 tweak words cyclically to form 21 subkeys. It might still be possible to get some speedup out of AVX-512 but I suspect the compiler would be able to do a better job here. The subkeys are generated as per the Skein 1.3 specification, with one difference: all subkeys except the last one have their words permuted (to be able to be used by the vectorized AVX-512 implementation) with the following permutation:
+The default Makefile uses:
 
-    (0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15)
+```sh
+-mavx512f -mavx512vl
+```
 
-There are two accompanying programs, a benchmark tool and a test program, accessible through `make bench` and `make test`. If the programs crash with an illegal instruction signal, your system does not support AVX-512. Check with `/proc/cpuinfo` or similar. If you do not have a compatible processor, Amazon Web Services provide access to some AVX-512 capable processors through their C5 or M5 instances, they are pretty cheap if you only need them for an hour or two.
+`AVX-512VL` is kept for compatibility with the original repo's requirement, although the current 512-bit intrinsics route mainly relies on AVX-512F operations.
 
-For the test vectors, I used the few that I could find in the Skein 1.3 NIST SHA3 submission package (most of them are for Skein rather than Threefish) and used the reference implementation in the package to generate some more test vectors, by running the reference implementation against a set of random (plaintext, key, tweak) tuples.
+## API usage
 
-# Implementation
+```c
+#include "avxfish.h"
 
-The basic idea behind this implementation is to observe that with appropriate swizzling of the input, the MIX operations and subkey additions can be expressed as a vector operation on two 512-bit registers. The correct approach is to interleave even and odd elements in the input array so that every other item is in the first 512 bits and the rest are in the last 512 bits. Four Threefish-1024 rounds originally look like this:
+uint64_t subkeys[AVXFISH_EXPANDED_KEY_WORDS];
+threefish1024_key_schedule(key_words, tweak_words, subkeys);
 
-<p align="center">
-<img src="https://github.com/TomCrypto/avxfish/blob/master/media/diagram-standard.png?raw=true" alt="Standard Threefish-1024 round structure"/>
-</p>
+avxfish_encrypt_block(plain_128_bytes, cipher_128_bytes, subkeys);
+avxfish_decrypt_block(cipher_128_bytes, plain_128_bytes, subkeys);
+```
 
-After doing some input swizzling and working through the permutations, the rounds can now be viewed like this:
+The old in-place encryption call still works:
 
-<p align="center">
-<img src="https://github.com/TomCrypto/avxfish/blob/master/media/diagram-vectorized.png?raw=true" alt="Vectorized Threefish-1024 round structure"/>
-</p>
+```c
+avxfish(block_128_bytes, subkeys);
+```
 
-This is easily seen to be trivially vectorizable by treating each half of the input as an 8-word vector. Furthermore, as shown in the diagram above, the resulting round permutation actually turns out to be equal to
+## Alignment
 
-    (0, 1, 3, 2, 5, 6, 7, 4, 12, 14, 13, 15, 11, 9, 10, 8)
+The original NASM version required 64-byte aligned block and subkey pointers. This intrinsics implementation uses unaligned loads and stores for blocks, so `in` and `out` no longer need special alignment. 64-byte alignment is still recommended for subkeys and buffers.
 
-which happens to be separable into two permutations of the two 512-bit halves, allowing for the use of the efficient `vpermq` instruction instead of the rather slow `vpermi2q`. It is unclear whether this was intended by the Skein team; I did not find hard evidence one way or the other but I suspect the permutation was designed specifically to have this property. The end result is a fully vectorized Threefish implementation, with some bookkeeping at the beginning and end to account for the necessary data shuffling.
+## Notes
 
-One limitation of this implementation is that it requires each subkey to be calculated ahead of time. While it is quite common in non-vectorized implementations to just compute the subkeys on-demand - as it is essentially free to do so in their case - it is unfortunately not possible for the vectorized implementation to compute the subkeys on the fly, as the Threefish key schedule is relatively SIMD-unfriendly, as explained earlier. In addition, all precomputed subkeys except the last one should be shuffled in the same way as the input block to avoid having to unnecessarily unvectorize and revectorize the input just to add the subkeys.
-
-# License
-
-This implementation is licensed under the MIT license. See the LICENSE file for details.
+The expanded subkey format is now normal Threefish word order for all 21 subkeys. This is easier to verify against standard test vectors and simpler to embed in other libraries.
