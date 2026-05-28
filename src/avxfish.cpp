@@ -4,22 +4,77 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
 
-#if defined(__GNUC__) || defined(__clang__)
-# pragma GCC push_options
-# pragma GCC target("avx512f")
-#endif
-
-#include <immintrin.h>
 #include <stdint.h>
 #include <string.h>
-
-#include "../include/avxfish.h"
 
 #if defined(_MSC_VER)
 # include <intrin.h>
 #else
 # include <cpuid.h>
 #endif
+
+#include "../include/avxfish.h"
+
+// Runtime detection must NOT be compiled under target("avx512f") to avoid
+// the compiler emitting AVX-512 instructions in the detection path itself.
+namespace avxfish_detect {
+
+static uint64_t xgetbv0() noexcept
+{
+#if defined(_MSC_VER)
+    return _xgetbv(0);
+#else
+    uint32_t eax, edx;
+    __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
+    return (static_cast<uint64_t>(edx) << 32) | eax;
+#endif
+}
+
+static void cpuidex(int out[4], int leaf, int subleaf) noexcept
+{
+#if defined(_MSC_VER)
+    __cpuidex(out, leaf, subleaf);
+#else
+    uint32_t a, b, c, d;
+    __cpuid_count(static_cast<uint32_t>(leaf), static_cast<uint32_t>(subleaf), a, b, c, d);
+    out[0] = static_cast<int>(a);
+    out[1] = static_cast<int>(b);
+    out[2] = static_cast<int>(c);
+    out[3] = static_cast<int>(d);
+#endif
+}
+
+static bool has_avx512f_runtime() noexcept
+{
+    int regs[4] = {0,0,0,0};
+    cpuidex(regs, 0, 0);
+    if (regs[0] < 7)
+        return false;
+
+    cpuidex(regs, 1, 0);
+    const bool osxsave = (static_cast<uint32_t>(regs[2]) & (1U << 27)) != 0;
+    const bool avx = (static_cast<uint32_t>(regs[2]) & (1U << 28)) != 0;
+    if (!osxsave || !avx)
+        return false;
+
+    const uint64_t xcr0 = xgetbv0();
+    if ((xcr0 & 0xE6U) != 0xE6U)
+        return false;
+
+    cpuidex(regs, 7, 0);
+    const bool avx512f = (static_cast<uint32_t>(regs[1]) & (1U << 16)) != 0;
+    return avx512f;
+}
+
+} // namespace avxfish_detect
+
+// AVX-512 computation code below this point.
+#if defined(__GNUC__) || defined(__clang__)
+# pragma GCC push_options
+# pragma GCC target("avx512f")
+#endif
+
+#include <immintrin.h>
 
 namespace avxfish_threefish1024_avx512 {
 
@@ -212,58 +267,10 @@ static inline void store_block_words_xor(uint8_t out[128], const uint64_t w[16],
     }
 }
 
-static uint64_t xgetbv0() noexcept
-{
-#if defined(_MSC_VER)
-    return _xgetbv(0);
-#else
-    uint32_t eax, edx;
-    __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
-    return (static_cast<uint64_t>(edx) << 32) | eax;
-#endif
-}
-
-static void cpuidex(int out[4], int leaf, int subleaf) noexcept
-{
-#if defined(_MSC_VER)
-    __cpuidex(out, leaf, subleaf);
-#else
-    uint32_t a, b, c, d;
-    __cpuid_count(static_cast<uint32_t>(leaf), static_cast<uint32_t>(subleaf), a, b, c, d);
-    out[0] = static_cast<int>(a);
-    out[1] = static_cast<int>(b);
-    out[2] = static_cast<int>(c);
-    out[3] = static_cast<int>(d);
-#endif
-}
-
-static bool has_avx512f_runtime() noexcept
-{
-    int regs[4] = {0,0,0,0};
-    cpuidex(regs, 0, 0);
-    if (regs[0] < 7)
-        return false;
-
-    cpuidex(regs, 1, 0);
-    const bool osxsave = (static_cast<uint32_t>(regs[2]) & (1U << 27)) != 0;
-    const bool avx = (static_cast<uint32_t>(regs[2]) & (1U << 28)) != 0;
-    if (!osxsave || !avx)
-        return false;
-
-    // XMM, YMM, opmask, ZMM_hi256, and hi16_ZMM state must be enabled by the OS.
-    const uint64_t xcr0 = xgetbv0();
-    if ((xcr0 & 0xE6U) != 0xE6U)
-        return false;
-
-    cpuidex(regs, 7, 0);
-    const bool avx512f = (static_cast<uint32_t>(regs[1]) & (1U << 16)) != 0;
-    return avx512f;
-}
-
 } // namespace avxfish_threefish1024_avx512
 
 extern "C" int avxfish_avx512_available(void) {
-    return avxfish_threefish1024_avx512::has_avx512f_runtime() ? 1 : 0;
+    return avxfish_detect::has_avx512f_runtime() ? 1 : 0;
 }
 
 extern "C" void threefish1024_key_schedule(const void *key, const void *tweak, uint64_t *subkeys) {
