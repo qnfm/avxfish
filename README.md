@@ -61,9 +61,20 @@ The expanded subkey format is now normal Threefish word order for all 21 subkeys
 All generated object files and binaries are placed under `build/`:
 
 ```bash
-make
+make          # builds test and bench binaries
+make lib      # builds build/libavxfish.a (static library for downstream projects)
 ./build/test
 ./build/bench
 ```
 
 The convenience targets `make run-test` and `make run-bench` also use these paths.
+
+## Use as a library
+
+Downstream projects (e.g. [jentfish](https://github.com/qnfm/jentfish)) can link against the static library:
+
+```bash
+make lib
+# produces build/libavxfish.a
+# link with: -Lpath/to/avxfish/build -lavxfish -lstdc++
+```
