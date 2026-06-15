@@ -253,18 +253,10 @@ static inline void load_block_words(const uint8_t in[128], uint64_t w[16]) noexc
         w[i] = load_le64(in + 8 * i);
 }
 
-static inline void store_block_words_xor(uint8_t out[128], const uint64_t w[16], const uint8_t* xorBlock) noexcept
+static inline void store_block_words(uint8_t out[128], const uint64_t w[16]) noexcept
 {
-    uint8_t tmp[128];
     for (unsigned i = 0; i < 16; ++i)
-        store_le64(tmp + 8 * i, w[i]);
-
-    if (xorBlock) {
-        for (unsigned i = 0; i < 128; ++i)
-            out[i] = static_cast<uint8_t>(tmp[i] ^ xorBlock[i]);
-    } else {
-        memcpy(out, tmp, 128);
-    }
+        store_le64(out + 8 * i, w[i]);
 }
 
 } // namespace avxfish_threefish1024_avx512
@@ -303,14 +295,14 @@ extern "C" void avxfish_encrypt_block(const void *in, void *out, const void *sub
     uint64_t iw[16], ow[16];
     avxfish_threefish1024_avx512::load_block_words(static_cast<const uint8_t *>(in), iw);
     avxfish_threefish1024_avx512::encrypt_words(iw, ow, static_cast<const uint64_t *>(subkeys));
-    avxfish_threefish1024_avx512::store_block_words_xor(static_cast<uint8_t *>(out), ow, nullptr);
+    avxfish_threefish1024_avx512::store_block_words(static_cast<uint8_t *>(out), ow);
 }
 
 extern "C" void avxfish_decrypt_block(const void *in, void *out, const void *subkeys) {
     uint64_t iw[16], ow[16];
     avxfish_threefish1024_avx512::load_block_words(static_cast<const uint8_t *>(in), iw);
     avxfish_threefish1024_avx512::decrypt_words(iw, ow, static_cast<const uint64_t *>(subkeys));
-    avxfish_threefish1024_avx512::store_block_words_xor(static_cast<uint8_t *>(out), ow, nullptr);
+    avxfish_threefish1024_avx512::store_block_words(static_cast<uint8_t *>(out), ow);
 }
 
 extern "C" void avxfish(void *block, const void *subkeys) {
@@ -329,12 +321,19 @@ extern "C" void avxfish_decrypt(void *block, const void *subkeys) {
 
 #include "../include/avxfish.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static void avxfish_abort_no_avx512(const char *func) {
+    fprintf(stderr, "avxfish: %s called on non-x86_64 platform (no AVX-512 support)\n", func);
+    abort();
+}
 
 extern "C" int avxfish_avx512_available(void) { return 0; }
-extern "C" void threefish1024_key_schedule(const void *, const void *, uint64_t *subkeys) { memset(subkeys, 0, AVXFISH_EXPANDED_KEY_BYTES); }
-extern "C" void avxfish_encrypt_block(const void *, void *, const void *) {}
-extern "C" void avxfish_decrypt_block(const void *, void *, const void *) {}
-extern "C" void avxfish(void *, const void *) {}
-extern "C" void avxfish_decrypt(void *, const void *) {}
+extern "C" void threefish1024_key_schedule(const void *, const void *, uint64_t *) { avxfish_abort_no_avx512("threefish1024_key_schedule"); }
+extern "C" void avxfish_encrypt_block(const void *, void *, const void *) { avxfish_abort_no_avx512("avxfish_encrypt_block"); }
+extern "C" void avxfish_decrypt_block(const void *, void *, const void *) { avxfish_abort_no_avx512("avxfish_decrypt_block"); }
+extern "C" void avxfish(void *, const void *) { avxfish_abort_no_avx512("avxfish"); }
+extern "C" void avxfish_decrypt(void *, const void *) { avxfish_abort_no_avx512("avxfish_decrypt"); }
 
 #endif
